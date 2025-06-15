@@ -1,0 +1,212 @@
+name: IPA Signing Workflow
+run-name: "${{ github.event.inputs.business_arguments }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: 'URL of the IPA file to sign'
+        required: true
+      cert_id:
+        description: 'Certificate ID to use from store4me/certificates'
+        required: true
+      postfix:
+        description: 'Postfix to append to bundle id (optional)'
+        required: false
+      business_arguments:
+        description: 'business arguments, comma-separated, no spaces, in key=value form'
+        required: true
+
+jobs:
+  sign:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # --------------------------------------------------
+      # Obtain GitHub app token to access the private certificate store
+      # --------------------------------------------------
+      - name: Get Github Token
+        uses: actions/create-github-app-token@v2
+        id: github_app_token
+        with:
+          app-id: ${{ vars._GITHUB_APP_ID }}
+          private-key: ${{ secrets._GITHUB_APP_PEM }}
+          owner: ${{ github.repository_owner }}
+
+      # --------------------------------------------------
+      # Download IPA, certificate, provisioning profile and password
+      # --------------------------------------------------
+      - name: Download IPA
+        shell: bash
+        env:
+          IPA_URL: ${{ github.event.inputs.ipa_url }}
+        run: |
+          # URL 마스킹
+          echo "::add-mask::$IPA_URL"
+
+          # 조용히 다운로드. 오류만 보여주지만 실제 URL은 *** 로 치환됨
+          curl -sS -L -o unsigned.ipa "$IPA_URL"
+
+      - name: Download Certificate and Provisioning Profile
+        run: |
+          curl -L \
+            -H "Authorization: Bearer ${{ steps.github_app_token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            -o cert.p12 \
+            "https://api.github.com/repos/${{ secrets.CERT_REPOSITORY }}/contents/${{ github.event.inputs.cert_id }}/cert.p12"
+
+          curl -L \
+            -H "Authorization: Bearer ${{ steps.github_app_token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            -o prov.mobileprovision \
+            "https://api.github.com/repos/${{ secrets.CERT_REPOSITORY }}/contents/${{ github.event.inputs.cert_id }}/prov.mobileprovision"
+
+          curl -L \
+            -H "Authorization: Bearer ${{ steps.github_app_token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            -o cert_pass.txt \
+            "https://api.github.com/repos/${{ secrets.CERT_REPOSITORY }}/contents/${{ github.event.inputs.cert_id }}/cert_pass.txt"
+
+      # --------------------------------------------------
+      # Download signing script (sign.py) from private repo
+      # --------------------------------------------------
+      - name: Download Signing Script
+        run: |
+          curl -L \
+            -H "Authorization: Bearer ${{ steps.github_app_token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            -o sign.py \
+            "https://api.github.com/repos/${{ secrets.SIGN_SCRIPT_REPO }}/contents/sign.py"
+
+      # --------------------------------------------------
+      # (Optional) compute bundle-id & bundle-name with postfix
+      # --------------------------------------------------
+      - name: Compute bundle-id and bundle-name with postfix (optional)
+        id: bundleid
+        shell: bash
+        run: |
+          if [ -z "${{ github.event.inputs.postfix }}" ]; then
+            echo "BUNDLE_ARG=" >> $GITHUB_ENV
+            echo "BUNDLE_NAME=" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          TMPDIR=$(mktemp -d)
+          unzip -q unsigned.ipa -d "$TMPDIR"
+
+          # Prefer Info.plist of app bundle directly under Payload/*.app
+          MAIN_PLIST=$(find "$TMPDIR/Payload" -maxdepth 2 -path "*/Info.plist" -print -quit)
+          BASE_BID=""
+          if [ -n "$MAIN_PLIST" ]; then
+            BASE_BID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$MAIN_PLIST" 2>/dev/null || true)
+          fi
+
+          # Fallback: iterate over any remaining plists
+          if [ -z "$BASE_BID" ]; then
+            while IFS= read -r plist; do
+              BID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$plist" 2>/dev/null || true)
+              if [ -n "$BID" ]; then
+                BASE_BID=$BID
+                break
+              fi
+            done < <(find "$TMPDIR" -name Info.plist)
+          fi
+
+          if [ -z "$BASE_BID" ]; then
+            echo "::error::Unable to locate CFBundleIdentifier in any Info.plist" && exit 1
+          fi
+
+          NEW_BID="${BASE_BID}.${{ github.event.inputs.postfix }}"
+          echo "BUNDLE_ARG=--bundle-id $NEW_BID" >> $GITHUB_ENV
+          echo "Using bundle id: $NEW_BID"
+
+          # --------------------------------------------------
+          # Compute new bundle name with postfix
+          # --------------------------------------------------
+          BASE_BNAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "${MAIN_PLIST:-}" 2>/dev/null || true)
+          if [ -z "$BASE_BNAME" ]; then
+            BASE_BNAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "${MAIN_PLIST:-}" 2>/dev/null || true)
+          fi
+
+          # Fallback: iterate over any remaining plists if name not found
+          if [ -z "$BASE_BNAME" ]; then
+            while IFS= read -r plist; do
+              BNAME=$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print CFBundleName' "$plist" 2>/dev/null || true)
+              if [ -n "$BNAME" ]; then
+                BASE_BNAME=$BNAME
+                break
+              fi
+            done < <(find "$TMPDIR" -name Info.plist)
+          fi
+
+          if [ -n "$BASE_BNAME" ]; then
+            NEW_BNAME="$BASE_BNAME ${{ github.event.inputs.postfix }}"
+            echo "BUNDLE_NAME=$NEW_BNAME" >> $GITHUB_ENV
+            echo "Using bundle name: $NEW_BNAME"
+          else
+            echo "BUNDLE_NAME=" >> $GITHUB_ENV
+          fi
+
+      # --------------------------------------------------
+      # Re-sign IPA using sign.py
+      # --------------------------------------------------
+      - name: Sign IPA with sign.py
+        run: |
+          CERT_PASS=$(cat cert_pass.txt)
+          TEAM_ID=$(openssl pkcs12 -in cert.p12 -nodes -passin pass:"$CERT_PASS" | \
+                    openssl x509 -noout -subject | \
+                    sed -n 's/.*UID=\([A-Z0-9]\{10\}\).*/\1/p')
+
+          python3 sign.py \
+            --unsigned-ipa unsigned.ipa \
+            --cert cert.p12 \
+            --cert-pass "$CERT_PASS" \
+            --team-id "$TEAM_ID" \
+            --prov prov.mobileprovision \
+            $BUNDLE_ARG \
+            ${BUNDLE_NAME:+--bundle-name "$BUNDLE_NAME"} \
+            -p
+
+      # --------------------------------------------------
+      # Configure AWS credentials (Cloudflare R2 compatible)
+      # --------------------------------------------------
+      - name: Configure AWS Credentials for R2
+        run: |
+          mkdir -p ~/.aws
+          cat > ~/.aws/credentials << EOF
+          [default]
+          aws_access_key_id=${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key=${{ secrets.R2_SECRET_ACCESS_KEY }}
+          EOF
+
+          cat > ~/.aws/config << EOF
+          [default]
+          region=auto
+          endpoint_url=${{ secrets.R2_ENDPOINT }}
+          EOF
+
+      # --------------------------------------------------
+      # Upload signed IPA to R2 bucket using signing_job_id from business_arguments
+      # --------------------------------------------------
+      - name: Upload to R2
+        shell: bash
+        run: |
+          SIGNING_JOB_ID=$(echo "${{ github.event.inputs.business_arguments }}" | tr ',' '\n' | grep "signing_job_id=" | cut -d'=' -f2)
+          if [ -z "$SIGNING_JOB_ID" ]; then
+            echo "Error: signing_job_id not found in business_arguments"
+            exit 1
+          fi
+
+          # Mask sensitive values from logs
+          echo "::add-mask::$SIGNING_JOB_ID"
+          echo "::add-mask::s3://store4me-signed/$SIGNING_JOB_ID.ipa"
+
+          aws s3 cp --no-progress --checksum-algorithm CRC32 signed.ipa "s3://store4me-signed/${SIGNING_JOB_ID}.ipa" 

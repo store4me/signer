@@ -21,6 +21,10 @@ jobs:
   sign:
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      BUSINESS_ARGUMENTS: ${{ github.event.inputs.business_arguments }}
+      WEBHOOK_URL: https://api.store4.me/webhooks/github
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -54,6 +58,20 @@ jobs:
 
           # 조용히 다운로드. 오류만 보여주지만 실제 URL은 *** 로 치환됨
           curl -sS -L -o unsigned.ipa "$IPA_URL"
+      - name: Notify progress (1/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="14"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       - name: Download Certificate and Provisioning Profile
         run: |
@@ -74,6 +92,20 @@ jobs:
             -H "Accept: application/vnd.github.v3.raw" \
             -o cert_pass.txt \
             "https://api.github.com/repos/${{ secrets.CERT_REPOSITORY }}/contents/${{ github.event.inputs.cert_id }}/cert_pass.txt"
+      - name: Notify progress (2/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="28"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       # --------------------------------------------------
       # Download signing script (sign.py) from private repo
@@ -85,6 +117,20 @@ jobs:
             -H "Accept: application/vnd.github.v3.raw" \
             -o sign.py \
             "https://api.github.com/repos/${{ secrets.SIGN_SCRIPT_REPO }}/contents/sign.py"
+      - name: Notify progress (3/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="42"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       # --------------------------------------------------
       # (Optional) compute bundle-id & bundle-name with postfix
@@ -154,6 +200,20 @@ jobs:
           else
             echo "BUNDLE_NAME=" >> $GITHUB_ENV
           fi
+      - name: Notify progress (4/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="56"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       # --------------------------------------------------
       # Re-sign IPA using sign.py
@@ -174,6 +234,20 @@ jobs:
             $BUNDLE_ARG \
             ${BUNDLE_NAME:+--bundle-name "$BUNDLE_NAME"} \
             -p
+      - name: Notify progress (5/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="70"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       # --------------------------------------------------
       # Configure AWS credentials (Cloudflare R2 compatible)
@@ -192,6 +266,20 @@ jobs:
           region=auto
           endpoint_url=${{ secrets.R2_ENDPOINT }}
           EOF
+      - name: Notify progress (6/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="84"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload"
 
       # --------------------------------------------------
       # Upload signed IPA to R2 bucket using signing_job_id from business_arguments
@@ -210,3 +298,17 @@ jobs:
           echo "::add-mask::s3://store4me-signed/$SIGNING_JOB_ID.ipa"
 
           aws s3 cp --no-progress --checksum-algorithm CRC32 signed.ipa "s3://store4me-signed/${SIGNING_JOB_ID}.ipa" 
+      - name: Notify progress (7/7)
+        if: success()
+        shell: bash
+        run: |
+          PROGRESS="100"
+          payload=$(jq -n --arg business_arguments "$BUSINESS_ARGUMENTS" --arg progress "$PROGRESS" '{event:"workflow_progress", business_arguments:$business_arguments, progress:$progress}')
+          sig="sha256=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: GitHub-Hookshot" \
+            -H "X-GitHub-Event: workflow_progress" \
+            -H "X-GitHub-Delivery: $(uuidgen)" \
+            -H "X-Hub-Signature-256: $sig" \
+            --data "$payload" 

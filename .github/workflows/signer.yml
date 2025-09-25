@@ -233,7 +233,8 @@ jobs:
             --prov prov.mobileprovision \
             $BUNDLE_ARG \
             ${BUNDLE_NAME:+--bundle-name "$BUNDLE_NAME"} \
-            -p
+            -p \
+            -a
       - name: Notify progress (5/7)
         if: success()
         shell: bash
